@@ -29,7 +29,7 @@
 #define usb_lld_disconnect_bus(usbp)
 
 /* Virtual serial port over USB.*/
-static SerialUSBDriver SDU1;
+SerialUSBDriver SDU1;
 
 static float mdps_per_digit = 8.75;
 
