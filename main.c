@@ -22,6 +22,7 @@
 #include "hal.h"
 #include "test.h"
 #include "spi.h"
+#include "i2c.h"
 #include "usbcfg.h"
 #include "chprintf.h"
 
@@ -43,7 +44,13 @@ static const SPIConfig spi1cfg = {
   0
 };
 
-static uint8_t readByte(uint8_t reg)
+static const I2CConfig i2cconfig = {
+  0x00902025, //voodoo magic
+  0,
+  0
+};
+
+static uint8_t readByteSPI(uint8_t reg)
 {
 	char txbuf[2] = {0x80 | reg, 0xFF};
 	char rxbuf[2];
@@ -52,7 +59,7 @@ static uint8_t readByte(uint8_t reg)
 	spiUnselect(&SPID1);
 	return rxbuf[1];
 }
-static uint8_t writeByte(uint8_t reg, uint8_t val)
+static uint8_t writeByteSPI(uint8_t reg, uint8_t val)
 {
 	char txbuf[2] = {reg, val};
 	char rxbuf[2];
@@ -62,26 +69,84 @@ static uint8_t writeByte(uint8_t reg, uint8_t val)
 	return rxbuf[1];
 }
 
+static uint8_t readByteI2C(uint8_t addr, uint8_t reg)
+{
+    uint8_t data;
+    i2cAcquireBus(&I2CD1);
+    (void)i2cMasterTransmitTimeout(&I2CD1, addr, &reg, 1, &data, 1, TIME_INFINITE);
+    i2cReleaseBus(&I2CD1);
+    return data;
+}
+static void writeByteI2C(uint8_t addr, uint8_t reg, uint8_t val)
+{
+    uint8_t cmd[] = {reg, val};
+    i2cAcquireBus(&I2CD1);
+    (void)i2cMasterTransmitTimeout(&I2CD1, addr, cmd, 2, NULL, 0, TIME_INFINITE);
+    i2cReleaseBus(&I2CD1);
+}
+
 static void initGyro(void)
 {
     /* see the L3GD20 Datasheet */
-    writeByte(0x20, 0x0F);
+    writeByteSPI(0x20, 0x0F);
+}
+static void initAccel(void)
+{
+    // Highest speed, enable all axes
+    writeByteI2C(0x19,0x20, 0x97);
+}
+static void initMag(void)
+{
+    // Highest speed, enable all axes
+    writeByteI2C(0x1E,0x00, 0x1C);
+    writeByteI2C(0x1E, 0x02, 0x00);
 }
 static void readGyro(float* data)
 {
     /* read from L3GD20 registers and assemble data */
-    uint8_t x_low = readByte(0x28);
-    uint8_t x_high = readByte(0x29);
-    uint8_t y_low = readByte(0x2a);
-    uint8_t y_high = readByte(0x2b);
-    uint8_t z_low = readByte(0x2c);
-    uint8_t z_high = readByte(0x2d);
+    uint8_t x_low = readByteSPI(0x28);
+    uint8_t x_high = readByteSPI(0x29);
+    uint8_t y_low = readByteSPI(0x2a);
+    uint8_t y_high = readByteSPI(0x2b);
+    uint8_t z_low = readByteSPI(0x2c);
+    uint8_t z_high = readByteSPI(0x2d);
     int16_t val_x = (x_high << 8) | x_low;
     int16_t val_y = (y_high << 8) | y_low;
     int16_t val_z = (z_high << 8) | z_low;
     data[0] = (((float)val_x) * mdps_per_digit)/1000.0;
     data[1] = (((float)val_y) * mdps_per_digit)/1000.0;
     data[2] = (((float)val_z) * mdps_per_digit)/1000.0;
+}
+static void readAccel(float* data)
+{
+    uint8_t x_low = readByteI2C(0x19, 0x28);
+    uint8_t x_high = readByteI2C(0x19, 0x29);
+    uint8_t y_low = readByteI2C(0x19, 0x2a);
+    uint8_t y_high = readByteI2C(0x19, 0x2b);
+    uint8_t z_low = readByteI2C(0x19, 0x2c);
+    uint8_t z_high = readByteI2C(0x19, 0x2d);
+    int16_t val_x = (x_high << 8) | x_low;
+    int16_t val_y = (y_high << 8) | y_low;
+    int16_t val_z = (z_high << 8) | z_low;
+    // Accel scale is +- 2.0g
+    data[0] = ((float)val_x)*(4.0/(65535.0))*9.81;
+    data[1] = ((float)val_y)*(4.0/(65535.0))*9.81;
+    data[2] = ((float)val_z)*(4.0/(65535.0))*9.81;
+}
+static void readMag(float* data)
+{
+    uint8_t x_high = readByteI2C(0x1E, 0x03);
+    uint8_t x_low = readByteI2C(0x1E, 0x04);
+    uint8_t z_high = readByteI2C(0x1E, 0x05);
+    uint8_t z_low = readByteI2C(0x1E, 0x06);
+    uint8_t y_high = readByteI2C(0x1E, 0x07);
+    uint8_t y_low = readByteI2C(0x1E, 0x08);
+    int16_t val_x = (x_high << 8) | x_low;
+    int16_t val_y = (y_high << 8) | y_low;
+    int16_t val_z = (z_high << 8) | z_low;
+    data[0] = ((float)val_x)*1.22;
+    data[1] = ((float)val_y)*1.22;
+    data[2] = ((float)val_z)*1.22;
 }
 
 /*
@@ -108,11 +173,18 @@ int main(void) {
     usbConnectBus(serusbcfg.usbp);
 
     spiStart(&SPID1, &spi1cfg);
+    i2cStart(&I2CD1, &i2cconfig);
     initGyro();
+    initAccel();
+    initMag();
 
     while (TRUE) {
 	float gyroData[3];
+        float accelData[3];
+        float magData[3];
 	readGyro(gyroData);
-	chprintf((BaseSequentialStream *)&SDU1, "%f %f %f\n", gyroData[0], gyroData[1], gyroData[2]);
+	readAccel(accelData);
+	readMag(magData);
+	chprintf((BaseSequentialStream *)&SDU1, "%f %f %f %f %f %f %f %f %f\n", gyroData[0], gyroData[1], gyroData[2], accelData[0], accelData[1], accelData[2], magData[0], magData[1], magData[2]);
     }
 }
