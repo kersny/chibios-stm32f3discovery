@@ -26,4 +26,26 @@ Connect to the USB USER port.
 
     {sudo} cat /dev/ttyACM0
 
-You should see 3 floating point values corresponding to the x, y, and z rotational rates from the gyro.
+You should see 9 floating point values corresponding to the x, y, and z values from the gyroscope, accelerometer, and magnetometer.
+
+
+### Debug
+
+Again, with [stlink](https://github.com/texane/stlink).
+
+In one terminal:
+
+    {sudo} st-util
+    
+And another:
+
+    arm-non-eabi-gdb build/stm32f3discovery-demo.elf
+    
+And then within GDB:
+
+    > target extended-remote :4242
+    ...
+    > load
+    ...
+    
+And you can debug with GDB as you would expect.
