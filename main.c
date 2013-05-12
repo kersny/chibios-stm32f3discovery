@@ -88,79 +88,80 @@ static void writeByteI2C(uint8_t addr, uint8_t reg, uint8_t val)
 static void initGyro(void)
 {
     /* see the L3GD20 Datasheet */
-    writeByteSPI(0x20, 0x0F);
+    writeByteSPI(0x20, 0xcF);
 }
 static void initAccel(void)
 {
     // Highest speed, enable all axes
-    writeByteI2C(0x19,0x20, 0x97);
+    writeByteI2C(0x19, 0x20, 0x97);
 }
 static void initMag(void)
 {
-    // Highest speed, enable all axes
-    writeByteI2C(0x1E,0x00, 0x1C);
+    // Highest speed
+    writeByteI2C(0x1E, 0x00, 0x1C);
     writeByteI2C(0x1E, 0x02, 0x00);
 }
-static void readGyro(float* data)
+static uint8_t readGyro(float* data)
 {
     /* read from L3GD20 registers and assemble data */
-    uint8_t x_low = readByteSPI(0x28);
-    uint8_t x_high = readByteSPI(0x29);
-    uint8_t y_low = readByteSPI(0x2a);
-    uint8_t y_high = readByteSPI(0x2b);
-    uint8_t z_low = readByteSPI(0x2c);
-    uint8_t z_high = readByteSPI(0x2d);
-    int16_t val_x = (x_high << 8) | x_low;
-    int16_t val_y = (y_high << 8) | y_low;
-    int16_t val_z = (z_high << 8) | z_low;
-    data[0] = (((float)val_x) * mdps_per_digit)/1000.0;
-    data[1] = (((float)val_y) * mdps_per_digit)/1000.0;
-    data[2] = (((float)val_z) * mdps_per_digit)/1000.0;
+    /* 0xc0 sets read and address increment */
+    char txbuf[8] = {0xc0 | 0x27, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+    char rxbuf[8];
+    spiSelect(&SPID1);
+    spiExchange(&SPID1, 8, txbuf, rxbuf);
+    spiUnselect(&SPID1);
+    if (rxbuf[1] & 0x7) {
+        int16_t val_x = (rxbuf[3] << 8) | rxbuf[2];
+        int16_t val_y = (rxbuf[5] << 8) | rxbuf[4];
+        int16_t val_z = (rxbuf[7] << 8) | rxbuf[6];
+        data[0] = (((float)val_x) * mdps_per_digit)/1000.0;
+        data[1] = (((float)val_y) * mdps_per_digit)/1000.0;
+        data[2] = (((float)val_z) * mdps_per_digit)/1000.0;
+        return 1;
+    }
+    return 0;
 }
-static void readAccel(float* data)
+static uint8_t readAccel(float* data)
 {
-    uint8_t x_low = readByteI2C(0x19, 0x28);
-    uint8_t x_high = readByteI2C(0x19, 0x29);
-    uint8_t y_low = readByteI2C(0x19, 0x2a);
-    uint8_t y_high = readByteI2C(0x19, 0x2b);
-    uint8_t z_low = readByteI2C(0x19, 0x2c);
-    uint8_t z_high = readByteI2C(0x19, 0x2d);
-    int16_t val_x = (x_high << 8) | x_low;
-    int16_t val_y = (y_high << 8) | y_low;
-    int16_t val_z = (z_high << 8) | z_low;
-    // Accel scale is +- 2.0g
-    data[0] = ((float)val_x)*(4.0/(65535.0))*9.81;
-    data[1] = ((float)val_y)*(4.0/(65535.0))*9.81;
-    data[2] = ((float)val_z)*(4.0/(65535.0))*9.81;
+    // setting MSB makes it increment the address for a multiple byte read
+    uint8_t start_reg = 0x27 | 0x80;
+    uint8_t out[7];
+    i2cAcquireBus(&I2CD1);
+    msg_t f = i2cMasterTransmitTimeout(&I2CD1, 0x19, &start_reg, 1, out, 7, TIME_INFINITE);
+    (void)f;
+    i2cReleaseBus(&I2CD1);
+    if (out[0] & 0x8) {
+        int16_t val_x = (out[2] << 8) | out[1];
+        int16_t val_y = (out[4] << 8) | out[3];
+        int16_t val_z = (out[6] << 8) | out[5];
+        // Accel scale is +- 2.0g
+        data[0] = ((float)val_x)*(4.0/(65535.0))*9.81;
+        data[1] = ((float)val_y)*(4.0/(65535.0))*9.81;
+        data[2] = ((float)val_z)*(4.0/(65535.0))*9.81;
+        return 1;
+    }
+    return 0;
 }
-static void readMag(float* data)
+static uint8_t readMag(float* data)
 {
-    uint8_t x_high = readByteI2C(0x1E, 0x03);
-    uint8_t x_low = readByteI2C(0x1E, 0x04);
-    uint8_t z_high = readByteI2C(0x1E, 0x05);
-    uint8_t z_low = readByteI2C(0x1E, 0x06);
-    uint8_t y_high = readByteI2C(0x1E, 0x07);
-    uint8_t y_low = readByteI2C(0x1E, 0x08);
-    int16_t val_x = (x_high << 8) | x_low;
-    int16_t val_y = (y_high << 8) | y_low;
-    int16_t val_z = (z_high << 8) | z_low;
+    uint8_t start_reg = 0x03;
+    uint8_t out[7];
+    i2cAcquireBus(&I2CD1);
+    msg_t f = i2cMasterTransmitTimeout(&I2CD1, 0x1E, &start_reg, 1, out, 7, TIME_INFINITE);
+    (void)f;
+    i2cReleaseBus(&I2CD1);
+    //out[6] doesn't seem to reflect actual new data, so just push out every time
+    int16_t val_x = (out[0] << 8) | out[1];
+    int16_t val_z = (out[2] << 8) | out[3];
+    int16_t val_y = (out[4] << 8) | out[5];
     data[0] = ((float)val_x)*1.22;
     data[1] = ((float)val_y)*1.22;
     data[2] = ((float)val_z)*1.22;
+    return 1;
 }
 
-/*
- * Application entry point.
- */
 int main(void) {
 
-    /*
-     * System initializations.
-     * - HAL initialization, this also initializes the configured device drivers
-     *   and performs the board-specific initializations.
-     * - Kernel initialization, the main() function becomes a thread and the
-     *   RTOS is active.
-     */
     halInit();
     chSysInit();
 
@@ -182,9 +183,10 @@ int main(void) {
 	float gyroData[3];
         float accelData[3];
         float magData[3];
-	readGyro(gyroData);
-	readAccel(accelData);
-	readMag(magData);
-	chprintf((BaseSequentialStream *)&SDU1, "%f %f %f %f %f %f %f %f %f\n", gyroData[0], gyroData[1], gyroData[2], accelData[0], accelData[1], accelData[2], magData[0], magData[1], magData[2]);
+        if (readGyro(gyroData) && readAccel(accelData) && readMag(magData)) {
+            chprintf((BaseSequentialStream *)&SDU1, "%f %f %f ", gyroData[0], gyroData[1], gyroData[2]);
+            chprintf((BaseSequentialStream *)&SDU1, "%f %f %f ", accelData[0], accelData[1], accelData[2]);
+            chprintf((BaseSequentialStream *)&SDU1, "%f %f %f\n", magData[0], magData[1], magData[2]);
+        }
     }
 }
