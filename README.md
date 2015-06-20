@@ -6,7 +6,16 @@ An amalgamation of ChibiOS demo projects designed to run on the STM32F3Discovery
 
 ### Setup
 
-Requires an arm-none-eabi- set of gcc tools, I use [CodeSourcery Lite](http://www.mentor.com/embedded-software/codesourcery). Update the CHIBIOS variable in the Makefile to the location of the (Head, from SVN or Git) ChibiOS repository.
+Requires an arm-none-eabi- set of gcc tools, I use [CodeSourcery Lite](http://www.mentor.com/embedded-software/codesourcery). If you use
+
+    git clone --recursive https://github.com/kersny/chibios-stm32f3discovery.git
+
+to clone, or
+
+    git submodule update --init
+
+after cloning, it will pull down the matching version of ChibiOS and should then be buildable.
+
 
 
 ### Build
